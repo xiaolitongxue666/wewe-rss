@@ -49,7 +49,12 @@ export async function fetchJsonFeedPage(
   feedId: string,
   page: number,
   limit: number,
-  options?: { signal?: AbortSignal; fetchImpl?: typeof fetch },
+  options?: {
+    signal?: AbortSignal;
+    fetchImpl?: typeof fetch;
+    /** 例如 `fulltext` 触发服务端拉取公众号正文 HTML */
+    mode?: string;
+  },
 ): Promise<JsonFeedMinimal> {
   const root = normalizeBaseUrl(baseUrl);
   const segment = feedId === 'all' ? 'all' : feedId;
@@ -60,6 +65,7 @@ export async function fetchJsonFeedPage(
   const url = new URL(path);
   url.searchParams.set('limit', String(limit));
   url.searchParams.set('page', String(page));
+  if (options?.mode) url.searchParams.set('mode', options.mode);
   const fetchFn = options?.fetchImpl ?? fetch;
   const res = await fetchFn(url, {
     signal: options?.signal,
@@ -72,7 +78,7 @@ export async function fetchJsonFeedPage(
   return data;
 }
 
-function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
       reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));

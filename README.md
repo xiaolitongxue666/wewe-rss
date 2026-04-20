@@ -24,6 +24,7 @@
 |------|------|
 | 一键启动（Docker SQLite） | 仓库根目录 [`start-wewe-rss.sh`](./start-wewe-rss.sh)，配置示例见 [`compose.env.example`](./compose.env.example)、[`docker-compose.override.example.yml`](./docker-compose.override.example.yml)，详见下文「Windows 10…」一节。 |
 | 分页导出全部文章链接 | `pnpm urls:export`（实现于 [`tools/fetch-article-urls.ts`](./tools/fetch-article-urls.ts)，默认请求间隔，避免短时间打满本地服务）。详见「批量导出文章链接」。 |
+| 间隔导出正文（含 URL） | `pnpm articles:export`（[`tools/fetch-article-contents.ts`](./tools/fetch-article-contents.ts)，默认输出小 JSON + `.txt` / `.html` 侧车文件；`--bundle` 为单文件）。详见「导出正文（全文）」。 |
 | Shell 示例 | [`scripts/extract-feed-links.example.sh`](./scripts/extract-feed-links.example.sh) |
 
 ### 高级功能
@@ -200,6 +201,28 @@ curl -sS "http://localhost:4000/feeds/MP_WXS_123.json?limit=200&page=1" | jq -r 
 ```
 
 更完整的 shell 示例见 [`scripts/extract-feed-links.example.sh`](./scripts/extract-feed-links.example.sh)。纯函数测试：`pnpm test:tools`。若需立即刷新单源，可在 URL 上增加 `?update=true`（见上文「高级功能」）。
+
+## 📥 导出正文（全文）
+
+在已同步订阅、且 **本机 WeWe-RSS 与容器能访问** `mp.weixin.qq.com` 的前提下，可用脚本按 **极慢** 节奏拉取每篇正文并落盘。**默认每篇拆成三个文件**：`{文章id}.json`（仅元数据 + 短 `contentPreview` + 指向侧车文件）、`{文章id}.txt`（首行 URL + 标题 + **完整纯文本**）、`{文章id}.html`（完整原始 HTML，便于归档或浏览器打开）。若仍要单文件大包，可加 `--bundle`（体积大、难读）。
+
+**机制**：脚本只请求 `http://localhost:4000/feeds/{feedId}.json?limit=1&page=P&mode=fulltext`，由服务端 [`FeedsService`](./apps/server/src/feeds/feeds.service.ts) 代为请求微信图文页；**不在本机脚本里直连微信**，与阅读器开全文的行为一致。
+
+**风控与合规**：务必仅用于你有权访问的个人订阅内容；拉正文会显著增加请求量，可能触发 **微信侧或读书侧封控（「小黑屋」）**——默认 **45s** 基础间隔 + **0～10s** 随机抖动，可用 `--delay-ms` / `--jitter-ms` 再加大。**不在乎耗时时建议再放慢**。失败记录写入输出目录下的 `errors.log`；`--continue-on-error` 可在单页失败后继续（可能跳过篇目，慎用）。
+
+**与 `pnpm urls:export` / OPML**：`urls:export` 只收集链接；**OPML** 只导出订阅源地址；**本命令**才写入带正文的文件。导出目录默认 `exports/articles`（已加入 `.gitignore`）。
+
+```sh
+pnpm articles:export -- --feed MP_WXS_xxx --out-dir exports/huitianyi --delay-ms 60000 --jitter-ms 15000
+# 断点续跑（已存在的 {文章id}.json 跳过）
+pnpm articles:export -- --feed MP_WXS_xxx --resume --start-page 42
+# 查看全部参数
+pnpm articles:export -- --help
+```
+
+常用参数：`--out-dir`、`--delay-ms`、`--jitter-ms`、`--start-page`、`--max-pages`（调试）、`--resume`、`--continue-on-error`、`--bundle`（单文件 JSON 内含 HTML）。
+
+测试：`pnpm test:articles`。
 
 ## 🔑 账号状态说明
 

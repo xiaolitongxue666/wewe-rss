@@ -140,3 +140,6 @@ data/*
 # 本地导出 URL 列表等临时文件（可选）
 *-urls-export.txt
 *.urls.local.txt
+
+# 正文导出（pnpm articles:export）
+exports/
