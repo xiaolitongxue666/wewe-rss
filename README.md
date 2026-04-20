@@ -24,7 +24,7 @@
 |------|------|
 | 一键启动（Docker SQLite） | 仓库根目录 [`start-wewe-rss.sh`](./start-wewe-rss.sh)，配置示例见 [`compose.env.example`](./compose.env.example)、[`docker-compose.override.example.yml`](./docker-compose.override.example.yml)，详见下文「Windows 10…」一节。 |
 | 分页导出全部文章链接 | `pnpm urls:export`（实现于 [`tools/fetch-article-urls.ts`](./tools/fetch-article-urls.ts)，默认请求间隔，避免短时间打满本地服务）。详见「批量导出文章链接」。 |
-| 间隔导出正文（含 URL） | `pnpm articles:export`（[`tools/fetch-article-contents.ts`](./tools/fetch-article-contents.ts)，默认输出小 JSON + `.txt` / `.html` 侧车文件；`--bundle` 为单文件）。详见「导出正文（全文）」。 |
+| 间隔导出正文（含 URL） | `pnpm articles:export`（[`tools/fetch-article-contents.ts`](./tools/fetch-article-contents.ts) + [`tools/article-images.ts`](./tools/article-images.ts)，默认每篇一个目录：`{id}/article.* + assets/`；`--bundle` 为单文件）。详见「导出正文（全文）」。 |
 | Shell 示例 | [`scripts/extract-feed-links.example.sh`](./scripts/extract-feed-links.example.sh) |
 
 ### 高级功能
@@ -204,7 +204,7 @@ curl -sS "http://localhost:4000/feeds/MP_WXS_123.json?limit=200&page=1" | jq -r 
 
 ## 📥 导出正文（全文）
 
-在已同步订阅、且 **本机 WeWe-RSS 与容器能访问** `mp.weixin.qq.com` 的前提下，可用脚本按 **极慢** 节奏拉取每篇正文并落盘。**默认每篇拆成三个文件**：`{文章id}.json`（仅元数据 + 短 `contentPreview` + 指向侧车文件）、`{文章id}.txt`（首行 URL + 标题 + **完整纯文本**）、`{文章id}.html`（完整原始 HTML，便于归档或浏览器打开）。若仍要单文件大包，可加 `--bundle`（体积大、难读）。
+在已同步订阅、且 **本机 WeWe-RSS 与容器能访问** `mp.weixin.qq.com` 的前提下，可用脚本按 **极慢** 节奏拉取每篇正文并落盘。**默认每篇一个目录**：`{文章id}/article.json`（元数据 + `contentPreview` + `imagesDir` / `imageCount`）、`{文章id}/article.txt`、`{文章id}/article.html`。**默认会下载正文里 `<img>` 和内联样式 `url(...)` 指向的图片**到 `{文章id}/assets/`，并把 HTML 里的路径改成相对本地路径，便于离线打开。不需要图片时用 `--no-images`。若仍要单文件大包，可加 `--bundle`（与图片下载不兼容，会自动跳过图片）。
 
 **机制**：脚本只请求 `http://localhost:4000/feeds/{feedId}.json?limit=1&page=P&mode=fulltext`，由服务端 [`FeedsService`](./apps/server/src/feeds/feeds.service.ts) 代为请求微信图文页；**不在本机脚本里直连微信**，与阅读器开全文的行为一致。
 
@@ -213,6 +213,8 @@ curl -sS "http://localhost:4000/feeds/MP_WXS_123.json?limit=200&page=1" | jq -r 
 **与 `pnpm urls:export` / OPML**：`urls:export` 只收集链接；**OPML** 只导出订阅源地址；**本命令**才写入带正文的文件。导出目录默认 `exports/articles`（已加入 `.gitignore`）。
 
 ```sh
+# 建议先清理旧导出目录，避免新旧结构混在一起
+rm -rf exports/articles
 pnpm articles:export -- --feed MP_WXS_xxx --out-dir exports/huitianyi --delay-ms 60000 --jitter-ms 15000
 # 断点续跑（已存在的 {文章id}.json 跳过）
 pnpm articles:export -- --feed MP_WXS_xxx --resume --start-page 42
@@ -220,9 +222,38 @@ pnpm articles:export -- --feed MP_WXS_xxx --resume --start-page 42
 pnpm articles:export -- --help
 ```
 
-常用参数：`--out-dir`、`--delay-ms`、`--jitter-ms`、`--start-page`、`--max-pages`（调试）、`--resume`、`--continue-on-error`、`--bundle`（单文件 JSON 内含 HTML）。
+常用参数：`--out-dir`、`--delay-ms`、`--jitter-ms`、`--start-page`、`--max-pages`（调试）、`--resume`、`--continue-on-error`、`--bundle`（单文件 JSON 内含 HTML）、`--no-images`、`--image-delay-ms`、`--image-jitter-ms`（控制**每张图**下载间隔，与分页间隔独立；正式跑建议加大）。
 
 测试：`pnpm test:articles`。
+
+### 推荐使用流程（含图片、可离线打开）
+
+```sh
+# 1) 启动服务（容器）
+./start-wewe-rss.sh
+
+# 2) 清理旧导出，避免新旧结构混杂
+rm -rf exports/articles
+
+# 3) 低频导出正文（每篇一个目录，含 assets 图片）
+pnpm articles:export -- --feed all --out-dir exports/articles --delay-ms 60000 --jitter-ms 15000 --image-delay-ms 8000 --image-jitter-ms 4000 --continue-on-error
+```
+
+导出结构示例：
+
+```text
+exports/articles/
+  <articleId>/
+    article.json
+    article.txt
+    article.html
+    assets/
+      img_001.jpg
+      img_002.png
+      ...
+```
+
+打开 `exports/articles/<articleId>/article.html` 即可查看该篇文章正文与本地图片。若你只想看纯文本，打开同目录的 `article.txt`。
 
 ## 🔑 账号状态说明
 

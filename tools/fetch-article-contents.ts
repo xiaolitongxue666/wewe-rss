@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 
+import { localizeWechatArticleImages } from './article-images.ts';
 import {
   fetchJsonFeedPage,
   normalizeBaseUrl,
@@ -138,6 +139,12 @@ export type ExportArticleContentsCli = {
   continueOnError: boolean;
   /** 为 true 时仍写入单个大 JSON（含 contentHtml），默认 false 为拆分：小 JSON + .html + .txt */
   bundle: boolean;
+  /** 拆分模式下是否下载正文内图片并改写 HTML（默认 true）；`--no-images` 关闭 */
+  downloadImages: boolean;
+  /** 每张图下载前基础等待（毫秒），默认 8000 */
+  imageDelayMs: number;
+  /** 每张图额外随机 0..n 毫秒，默认 4000 */
+  imageJitterMs: number;
   help: boolean;
 };
 
@@ -152,6 +159,9 @@ export function parseArticleContentsArgv(argv: string[]): ExportArticleContentsC
   let resume = false;
   let continueOnError = false;
   let bundle = false;
+  let downloadImages = true;
+  let imageDelayMs = Number(process.env.WEWE_IMAGE_DELAY_MS ?? 8000);
+  let imageJitterMs = Number(process.env.WEWE_IMAGE_JITTER_MS ?? 4000);
   let help = false;
 
   for (let i = 2; i < argv.length; i++) {
@@ -160,6 +170,12 @@ export function parseArticleContentsArgv(argv: string[]): ExportArticleContentsC
     if (a === '--help' || a === '-h') help = true;
     else if (a === '--resume') resume = true;
     else if (a === '--bundle') bundle = true;
+    else if (a === '--no-images') downloadImages = false;
+    else if (a === '--download-images') downloadImages = true;
+    else if (a === '--image-delay-ms' && argv[i + 1])
+      imageDelayMs = Number(argv[++i]);
+    else if (a === '--image-jitter-ms' && argv[i + 1])
+      imageJitterMs = Number(argv[++i]);
     else if (a === '--continue-on-error') continueOnError = true;
     else if (a === '--base' && argv[i + 1]) baseUrl = argv[++i];
     else if (a === '--feed' && argv[i + 1]) feedId = argv[++i];
@@ -173,6 +189,8 @@ export function parseArticleContentsArgv(argv: string[]): ExportArticleContentsC
   if (!Number.isFinite(delayMs) || delayMs < 0) delayMs = 45000;
   if (!Number.isFinite(jitterMs) || jitterMs < 0) jitterMs = 10000;
   if (!Number.isFinite(startPage) || startPage < 1) startPage = 1;
+  if (!Number.isFinite(imageDelayMs) || imageDelayMs < 0) imageDelayMs = 8000;
+  if (!Number.isFinite(imageJitterMs) || imageJitterMs < 0) imageJitterMs = 4000;
 
   return {
     baseUrl,
@@ -185,6 +203,9 @@ export function parseArticleContentsArgv(argv: string[]): ExportArticleContentsC
     resume,
     continueOnError,
     bundle,
+    downloadImages,
+    imageDelayMs,
+    imageJitterMs,
     help,
   };
 }
@@ -207,9 +228,13 @@ Options:
   --resume               若 {id}.json 已存在则跳过该篇
   --continue-on-error    单页失败后写 errors.log 并继续
   --bundle               单文件 JSON 内含完整 HTML（体积大、难读）；默认拆分输出
+  --no-images            不下载正文内图片（默认会下载到 {id}_assets/ 并改写 HTML 为相对路径）
+  --image-delay-ms <n>   每张图下载前等待（默认 8000）
+  --image-jitter-ms <n>  每张图额外随机 0..n 毫秒（默认 4000）
   -h, --help
 
-  默认每篇生成：{id}.json（元数据 + 纯文本正文）+ {id}.html（原始 HTML）+ {id}.txt（同纯文本便于阅读）
+  默认每篇生成目录：{id}/article.json + article.txt + article.html；
+  拆分模式下默认在该目录内创建 assets/ 保存图片并改写 HTML 为相对路径。
 
 Example:
   pnpm articles:export -- --feed MP_WXS_xxx --out-dir exports/huitianyi --delay-ms 60000
@@ -277,7 +302,8 @@ async function main(): Promise<void> {
 
     const wxId = extractWeixinArticleId(url) ?? (typeof item.id === 'string' ? item.id : null);
     const fileId = sanitizeFileId(wxId ?? `page-${page}`);
-    const outPath = join(o.outDir, `${fileId}.json`);
+    const articleDir = join(o.outDir, fileId);
+    const outPath = join(articleDir, 'article.json');
 
     if (o.resume && (await fileExists(outPath))) {
       console.error(`[articles:export] skip existing ${outPath}`);
@@ -288,9 +314,46 @@ async function main(): Promise<void> {
 
     const { contentHtml, contentText } = extractContentFromFeedItem(item);
     const title = itemTitle(item);
-    const base = join(o.outDir, fileId);
-    const htmlPath = `${base}.html`;
-    const txtPath = `${base}.txt`;
+    await mkdir(articleDir, { recursive: true });
+    const htmlPath = join(articleDir, 'article.html');
+    const txtPath = join(articleDir, 'article.txt');
+
+    let downloadImages = o.downloadImages;
+    if (o.bundle && downloadImages) {
+      console.error(
+        '[articles:export] --bundle 与图片下载不兼容，已跳过图片下载',
+      );
+      downloadImages = false;
+    }
+
+    let bodyHtml = contentHtml;
+    let assetsDirName: string | null = null;
+    let imageCount = 0;
+    if (downloadImages && contentHtml) {
+      const dirName = 'assets';
+      try {
+        const r = await localizeWechatArticleImages({
+          contentHtml,
+          outDir: articleDir,
+          assetsDirName: dirName,
+          articleUrl: url,
+          imageDelayMs: o.imageDelayMs,
+          imageJitterMs: o.imageJitterMs,
+        });
+        bodyHtml = r.html;
+        assetsDirName = r.imageCount > 0 ? r.assetsDirName : null;
+        imageCount = r.imageCount;
+        if (imageCount > 0) {
+          console.error(`[articles:export] saved ${imageCount} images under ${fileId}/${dirName}/`);
+        }
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        await logError(o.outDir, `page=${page} images_localize ${msg}`);
+        bodyHtml = contentHtml;
+        assetsDirName = null;
+        imageCount = 0;
+      }
+    }
 
     if (o.bundle) {
       const payload = {
@@ -307,7 +370,7 @@ async function main(): Promise<void> {
       if (contentHtml) {
         await writeFile(
           htmlPath,
-          `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtmlMinimal(title ?? fileId)}</title></head><body>\n<!-- source: ${url} -->\n${contentHtml}\n</body></html>\n`,
+          `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtmlMinimal(title ?? fileId)}</title></head><body>\n<!-- source: ${url} -->\n${bodyHtml}\n</body></html>\n`,
           'utf8',
         );
       }
@@ -319,12 +382,14 @@ async function main(): Promise<void> {
         fetchedAt: new Date().toISOString(),
         feedPage: page,
         contentPreview: previewText(contentText, PREVIEW_CHARS),
-        contentHtmlFile: contentHtml ? `${fileId}.html` : null,
-        contentTextFile: `${fileId}.txt`,
+        contentHtmlFile: contentHtml ? 'article.html' : null,
+        contentTextFile: 'article.txt',
+        imagesDir: assetsDirName,
+        imageCount,
       };
       await writeFile(outPath, JSON.stringify(payload, null, 2), 'utf8');
       console.error(
-        `[articles:export] wrote ${outPath} + ${contentHtml ? `${fileId}.html ` : ''}${fileId}.txt`,
+        `[articles:export] wrote ${fileId}/article.json + ${contentHtml ? `${fileId}/article.html ` : ''}${fileId}/article.txt`,
       );
     }
 

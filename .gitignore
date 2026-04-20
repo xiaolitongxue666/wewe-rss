@@ -143,3 +143,5 @@ data/*
 
 # 正文导出（pnpm articles:export）
 exports/
+# 兼容自定义导出目录命名
+exports-*/

@@ -21,9 +21,10 @@
     "urls:export": "tsx tools/fetch-article-urls.ts",
     "articles:export": "tsx tools/fetch-article-contents.ts",
     "test:tools": "node --import tsx --test tools/fetch-article-urls.test.ts",
-    "test:articles": "node --import tsx --test tools/fetch-article-contents.test.ts"
+    "test:articles": "node --import tsx --test tools/fetch-article-contents.test.ts tools/article-images.test.ts"
   },
   "devDependencies": {
+    "cheerio": "1.0.0-rc.12",
     "prettier": "^3.2.5",
     "tsx": "^4.21.0"
   }
