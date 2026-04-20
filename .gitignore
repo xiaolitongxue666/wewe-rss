@@ -130,3 +130,13 @@ dist
 .pnp.*
 
 .DS_Store
+
+# Docker Compose 本地覆盖与密钥（SQLite 一键部署）
+docker-compose.override.yml
+compose.env
+data/*
+!data/.gitkeep
+
+# 本地导出 URL 列表等临时文件（可选）
+*-urls-export.txt
+*.urls.local.txt

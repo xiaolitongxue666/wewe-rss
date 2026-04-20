@@ -17,9 +17,12 @@
     "start:server": "pnpm --filter server start:prod",
     "start:web": "pnpm --filter web start",
     "fmt": "prettier --write .",
-    "fmt.check": "prettier --check ."
+    "fmt.check": "prettier --check .",
+    "urls:export": "tsx tools/fetch-article-urls.ts",
+    "test:tools": "node --import tsx --test tools/fetch-article-urls.test.ts"
   },
   "devDependencies": {
-    "prettier": "^3.2.5"
+    "prettier": "^3.2.5",
+    "tsx": "^4.21.0"
   }
 }

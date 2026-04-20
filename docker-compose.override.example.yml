@@ -1,0 +1,13 @@
+# 复制为 docker-compose.override.yml（已加入 .gitignore）后与 sqlite 编排合并。
+#   cp docker-compose.override.example.yml docker-compose.override.yml
+#
+# 典型用途：为 app 注入 HTTP(S)_PROXY（宿主机 localhost:7890 在容器内用 host.docker.internal）
+
+version: '3.9'
+
+services:
+  app:
+    environment:
+      - HTTP_PROXY=http://host.docker.internal:7890
+      - HTTPS_PROXY=http://host.docker.internal:7890
+      - NO_PROXY=localhost,127.0.0.1
